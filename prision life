@@ -1,0 +1,787 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Camera = workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+
+-- ==========================================
+-- CONFIGURACIÓN DEL SISTEMA
+-- ==========================================
+local config = {
+	enabled = false,
+	useWallCheck = true,
+	
+	-- Selección de objetivos por equipo
+	targetGuards = true,
+	targetInmates = true,
+	targetCriminals = true,
+	
+	-- Objetivo Prioritario
+	customTargetEnabled = false,
+	customTargetPlayer = nil,
+	priorityFocusOn = false, 
+	
+	targetPartMode = "Head",
+	smoothnessValue = 15, 
+	fovRadius = 120, 
+	fovColor = Color3.fromRGB(0, 150, 255), 
+	
+	espEnabled = true,
+	espBox = true,
+	espSkeleton = true,
+	espName = true,
+	
+	exceptions = {}, 
+	toggleKey = Enum.KeyCode.E,
+	switchTargetKey = Enum.KeyCode.Q,
+	hideUIKey = Enum.KeyCode.H,
+	espToggleKey = Enum.KeyCode.J
+}
+
+local currentTarget = nil
+local uiVisible = true
+
+local raycastParams = RaycastParams.new()
+raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+
+local function updateRaycastFilter()
+	if LocalPlayer.Character then
+		raycastParams.FilterDescendantsInstances = {LocalPlayer.Character}
+	end
+end
+LocalPlayer.CharacterAdded:Connect(updateRaycastFilter)
+updateRaycastFilter()
+
+-- ==========================================
+-- 1. INTERFAZ GRÁFICA (UI NATIVA)
+-- ==========================================
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "PrisonLifeUI"
+screenGui.ResetOnSpawn = false
+screenGui.IgnoreGuiInset = true
+screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local espFolder = Instance.new("Folder", screenGui)
+espFolder.Name = "ESP_Elements"
+
+local fovCircle = Instance.new("Frame", screenGui)
+fovCircle.Name = "FOVCircle"
+fovCircle.BackgroundTransparency = 1
+fovCircle.AnchorPoint = Vector2.new(0.5, 0.5)
+fovCircle.Position = UDim2.new(0.5, 0, 0.5, 0)
+fovCircle.Size = UDim2.new(0, config.fovRadius * 2, 0, config.fovRadius * 2)
+
+local fovStroke = Instance.new("UIStroke", fovCircle)
+fovStroke.Color = config.fovColor
+fovStroke.Thickness = 1.5
+local fovCorner = Instance.new("UICorner", fovCircle)
+fovCorner.CornerRadius = UDim.new(1, 0)
+
+-- Panel Principal
+local mainFrame = Instance.new("Frame", screenGui)
+mainFrame.Size = UDim2.new(0, 200, 0, 500)
+mainFrame.Position = UDim2.new(0, 20, 0.5, -250)
+mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+mainFrame.Active = true
+
+local title = Instance.new("TextLabel", mainFrame)
+title.Size = UDim2.new(1, 0, 0, 25)
+title.Position = UDim2.new(0, 0, 0, 5)
+title.Text = "Prison Life System (H)"
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.BackgroundTransparency = 1
+title.TextSize = 13
+title.Font = Enum.Font.SourceSansBold
+
+local aimToggleBtn = Instance.new("TextButton", mainFrame)
+aimToggleBtn.Size = UDim2.new(0, 180, 0, 26)
+aimToggleBtn.Position = UDim2.new(0, 10, 0, 32)
+aimToggleBtn.Text = "Lock-On: OFF (E)"
+aimToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+aimToggleBtn.BackgroundColor3 = Color3.fromRGB(255, 100, 100)
+aimToggleBtn.Font = Enum.Font.SourceSansBold
+
+local customTargetBtn = Instance.new("TextButton", mainFrame)
+customTargetBtn.Size = UDim2.new(0, 180, 0, 26)
+customTargetBtn.Position = UDim2.new(0, 10, 0, 62)
+customTargetBtn.Text = "Priority Target: OFF"
+customTargetBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+customTargetBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+customTargetBtn.Font = Enum.Font.SourceSansBold
+
+local priorityFocusBtn = Instance.new("TextButton", mainFrame)
+priorityFocusBtn.Size = UDim2.new(0, 180, 0, 26)
+priorityFocusBtn.Position = UDim2.new(0, 10, 0, 92)
+priorityFocusBtn.Text = "Priority Focus: OFF"
+priorityFocusBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+priorityFocusBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+priorityFocusBtn.Font = Enum.Font.SourceSansBold
+
+local wallCheckBtn = Instance.new("TextButton", mainFrame)
+wallCheckBtn.Size = UDim2.new(0, 180, 0, 26)
+wallCheckBtn.Position = UDim2.new(0, 10, 0, 122)
+wallCheckBtn.Text = "Wall Check: ON"
+wallCheckBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+wallCheckBtn.BackgroundColor3 = Color3.fromRGB(100, 255, 100)
+wallCheckBtn.Font = Enum.Font.SourceSansBold
+
+local espToggleBtn = Instance.new("TextButton", mainFrame)
+espToggleBtn.Size = UDim2.new(0, 180, 0, 26)
+espToggleBtn.Position = UDim2.new(0, 10, 0, 152)
+espToggleBtn.Text = "ESP All: ON (J)"
+espToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+espToggleBtn.BackgroundColor3 = Color3.fromRGB(100, 255, 100)
+espToggleBtn.Font = Enum.Font.SourceSansBold
+
+-- Filtros de Equipos
+local guardTargetBtn = Instance.new("TextButton", mainFrame)
+guardTargetBtn.Size = UDim2.new(0, 180, 0, 26)
+guardTargetBtn.Position = UDim2.new(0, 10, 0, 182)
+guardTargetBtn.Text = "Target Police: ON"
+guardTargetBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+guardTargetBtn.BackgroundColor3 = Color3.fromRGB(100, 150, 255)
+guardTargetBtn.Font = Enum.Font.SourceSansBold
+
+local inmateTargetBtn = Instance.new("TextButton", mainFrame)
+inmateTargetBtn.Size = UDim2.new(0, 180, 0, 26)
+inmateTargetBtn.Position = UDim2.new(0, 10, 0, 212)
+inmateTargetBtn.Text = "Target Prisoners: ON"
+inmateTargetBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+inmateTargetBtn.BackgroundColor3 = Color3.fromRGB(255, 170, 0)
+inmateTargetBtn.Font = Enum.Font.SourceSansBold
+
+local criminalTargetBtn = Instance.new("TextButton", mainFrame)
+criminalTargetBtn.Size = UDim2.new(0, 180, 0, 26)
+criminalTargetBtn.Position = UDim2.new(0, 10, 0, 242)
+criminalTargetBtn.Text = "Target Criminals: ON"
+criminalTargetBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+criminalTargetBtn.BackgroundColor3 = Color3.fromRGB(255, 60, 60)
+criminalTargetBtn.Font = Enum.Font.SourceSansBold
+
+local targetPartBtn = Instance.new("TextButton", mainFrame)
+targetPartBtn.Size = UDim2.new(0, 180, 0, 26)
+targetPartBtn.Position = UDim2.new(0, 10, 0, 272)
+targetPartBtn.Text = "Target Part: Head"
+targetPartBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+targetPartBtn.BackgroundColor3 = Color3.fromRGB(150, 50, 255)
+targetPartBtn.Font = Enum.Font.SourceSansBold
+
+local openExceptionsBtn = Instance.new("TextButton", mainFrame)
+openExceptionsBtn.Size = UDim2.new(0, 180, 0, 26)
+openExceptionsBtn.Position = UDim2.new(0, 10, 0, 302)
+openExceptionsBtn.Text = "Player List (Select Target)"
+openExceptionsBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+openExceptionsBtn.BackgroundColor3 = Color3.fromRGB(70, 130, 180)
+openExceptionsBtn.Font = Enum.Font.SourceSansBold
+
+local fovLabel = Instance.new("TextLabel", mainFrame)
+fovLabel.Size = UDim2.new(0, 180, 0, 15)
+fovLabel.Position = UDim2.new(0, 10, 0, 335)
+fovLabel.Text = "FOV Radius (0 - 500):"
+fovLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+fovLabel.BackgroundTransparency = 1
+fovLabel.TextSize = 12
+fovLabel.Font = Enum.Font.SourceSans
+fovLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local fovBox = Instance.new("TextBox", mainFrame)
+fovBox.Size = UDim2.new(0, 180, 0, 22)
+fovBox.Position = UDim2.new(0, 10, 0, 352)
+fovBox.Text = tostring(config.fovRadius)
+fovBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+fovBox.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+fovBox.TextSize = 13
+fovBox.Font = Enum.Font.SourceSansBold
+fovBox.ClearTextOnFocus = false
+
+local smoothLabel = Instance.new("TextLabel", mainFrame)
+smoothLabel.Size = UDim2.new(0, 180, 0, 15)
+smoothLabel.Position = UDim2.new(0, 10, 0, 380)
+smoothLabel.Text = "Smoothness (0 - 100):"
+smoothLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+smoothLabel.BackgroundTransparency = 1
+smoothLabel.TextSize = 12
+smoothLabel.Font = Enum.Font.SourceSans
+smoothLabel.TextXAlignment = Enum.TextXAlignment.Left
+
+local smoothBox = Instance.new("TextBox", mainFrame)
+smoothBox.Size = UDim2.new(0, 180, 0, 22)
+smoothBox.Position = UDim2.new(0, 10, 0, 397)
+smoothBox.Text = tostring(config.smoothnessValue)
+smoothBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+smoothBox.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+smoothBox.TextSize = 13
+smoothBox.Font = Enum.Font.SourceSansBold
+smoothBox.ClearTextOnFocus = false
+
+-- Ventana de Lista de Jugadores
+local playerListFrame = Instance.new("Frame", screenGui)
+playerListFrame.Size = UDim2.new(0, 210, 0, 310)
+playerListFrame.Position = UDim2.new(0, 230, 0.5, -155)
+playerListFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+playerListFrame.Visible = false
+playerListFrame.Active = true
+
+local listTitle = Instance.new("TextLabel", playerListFrame)
+listTitle.Size = UDim2.new(1, 0, 0, 25)
+listTitle.Position = UDim2.new(0, 0, 0, 5)
+listTitle.Text = "Players (Exclusions & Target)"
+listTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+listTitle.BackgroundTransparency = 1
+listTitle.TextSize = 11
+listTitle.Font = Enum.Font.SourceSansBold
+
+local scrollingPlayers = Instance.new("ScrollingFrame", playerListFrame)
+scrollingPlayers.Size = UDim2.new(0, 190, 0, 265)
+scrollingPlayers.Position = UDim2.new(0, 10, 0, 35)
+scrollingPlayers.BackgroundTransparency = 1
+scrollingPlayers.CanvasSize = UDim2.new(0, 0, 0, 0)
+scrollingPlayers.ScrollBarThickness = 4
+
+local uiListLayout = Instance.new("UIListLayout", scrollingPlayers)
+uiListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+uiListLayout.Padding = UDim.new(0, 5)
+
+-- Arrastrar UI
+local function makeDraggable(frame)
+	local dragging, dragInput, dragStart, startPos
+	frame.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			dragStart = input.Position
+			startPos = frame.Position
+			input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then dragging = false end
+			end)
+		end
+	end)
+	frame.InputChanged:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+			dragInput = input
+		end
+	end)
+	UserInputService.InputChanged:Connect(function(input)
+		if input == dragInput and dragging then
+			local delta = input.Position - dragStart
+			frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+		end
+	end)
+end
+
+makeDraggable(mainFrame)
+makeDraggable(playerListFrame)
+
+-- ==========================================
+-- 2. ESP NATIVO
+-- ==========================================
+local espDrawings = {}
+
+local function removeESP(player)
+	if espDrawings[player] then
+		espDrawings[player].box:Destroy()
+		espDrawings[player].name:Destroy()
+		for _, line in pairs(espDrawings[player].skeleton) do line:Destroy() end
+		espDrawings[player] = nil
+	end
+end
+
+local function setupESP(player)
+	if player == LocalPlayer then return end
+	if espDrawings[player] then return end
+
+	local box = Instance.new("Frame")
+	box.BackgroundTransparency = 1
+	box.AnchorPoint = Vector2.new(0.5, 0.5)
+	box.Visible = false
+	box.Parent = espFolder
+	
+	local boxStroke = Instance.new("UIStroke", box)
+	boxStroke.Thickness = 1.5
+
+	local nameLabel = Instance.new("TextLabel")
+	nameLabel.BackgroundTransparency = 1
+	nameLabel.AnchorPoint = Vector2.new(0.5, 1)
+	nameLabel.Size = UDim2.new(0, 150, 0, 15)
+	nameLabel.Font = Enum.Font.SourceSansBold
+	nameLabel.TextSize = 13
+	nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	nameLabel.TextStrokeTransparency = 0
+	nameLabel.Visible = false
+	nameLabel.Parent = espFolder
+
+	local function makeLine()
+		local line = Instance.new("Frame")
+		line.AnchorPoint = Vector2.new(0.5, 0.5)
+		line.BorderSizePixel = 0
+		line.Visible = false
+		line.Parent = espFolder
+		return line
+	end
+
+	espDrawings[player] = {
+		box = box,
+		stroke = boxStroke,
+		name = nameLabel,
+		skeleton = {
+			headToTorso = makeLine(),
+			torsoToLeftArm = makeLine(),
+			torsoToRightArm = makeLine(),
+			torsoToLeftLeg = makeLine(),
+			torsoToRightLeg = makeLine(),
+		}
+	}
+end
+
+for _, p in ipairs(Players:GetPlayers()) do setupESP(p) end
+Players.PlayerAdded:Connect(setupESP)
+Players.PlayerRemoving:Connect(removeESP)
+
+-- ==========================================
+-- 3. FILTRADO DE OBJETIVOS CON SOPORTE DE VEHÍCULOS
+-- ==========================================
+local function isException(player)
+	return config.exceptions[player.Name] or false
+end
+
+local function isEnemy(player)
+	if player == LocalPlayer then return false end
+	if isException(player) then return false end
+
+	local teamName = player.Team and player.Team.Name or "Neutral"
+
+	if teamName == "Guards" and not config.targetGuards then return false end
+	if teamName == "Inmates" and not config.targetInmates then return false end
+	if teamName == "Criminals" and not config.targetCriminals then return false end
+
+	return true
+end
+
+local function isWithinFOV(targetPart)
+	local screenPoint, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
+	if not onScreen then return false end
+	local screenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+	return (Vector2.new(screenPoint.X, screenPoint.Y) - screenCenter).Magnitude <= config.fovRadius
+end
+
+local function isVisible(targetPart)
+	if not config.useWallCheck then return true end
+	local direction = (targetPart.Position - Camera.CFrame.Position)
+	local result = workspace:Raycast(Camera.CFrame.Position, direction, raycastParams)
+	if not result then return true end
+	
+	-- Si el raycast golpea partes del propio personaje
+	if result.Instance:IsDescendantOf(targetPart.Parent) then
+		return true
+	end
+	
+	-- SOPORTE DE VEHÍCULOS: Si el jugador objetivo va montado en un vehículo, permitimos que el raycast ignore la carrocería del vehículo
+	local character = targetPart.Parent
+	local humanoid = character and character:FindFirstChild("Humanoid")
+	if humanoid and humanoid.SeatPart then
+		local vehicleModel = humanoid.SeatPart:FindFirstAncestorOfClass("Model")
+		if vehicleModel and result.Instance:IsDescendantOf(vehicleModel) then
+			return true
+		end
+	end
+	
+	return false
+end
+
+local function getTargetPart(character)
+	local mode = config.targetPartMode
+	if mode == "Random" then mode = (math.random(1, 2) == 1) and "Head" or "Torso" end
+	if mode == "Head" then return character:FindFirstChild("Head")
+	elseif mode == "Torso" then return character:FindFirstChild("Torso") or character:FindFirstChild("HumanoidRootPart") end
+	return character:FindFirstChild("Head")
+end
+
+local function getCustomTargetPart()
+	if config.customTargetEnabled and config.customTargetPlayer then
+		local p = config.customTargetPlayer
+		if p and p.Parent == Players then
+			local char = p.Character
+			if char then
+				local hum = char:FindFirstChild("Humanoid")
+				local targetPart = getTargetPart(char)
+				if hum and hum.Health > 0 and targetPart then
+					if isWithinFOV(targetPart) and isVisible(targetPart) then
+						return targetPart
+					end
+				end
+			end
+		end
+	end
+	return nil
+end
+
+local function findNewTarget(ignoreTarget)
+	local bestTarget = nil
+	local shortestDistance = math.huge
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player == LocalPlayer then continue end
+		local character = player.Character
+		if not character then continue end
+		local humanoid = character:FindFirstChild("Humanoid")
+		local targetPart = getTargetPart(character)
+		
+		if humanoid and humanoid.Health > 0 and targetPart and isEnemy(player) then
+			if targetPart == ignoreTarget then continue end
+			if isWithinFOV(targetPart) and isVisible(targetPart) then
+				local distance = (Camera.CFrame.Position - targetPart.Position).Magnitude
+				if distance < shortestDistance then
+					bestTarget = targetPart
+					shortestDistance = distance
+				end
+			end
+		end
+	end
+	return bestTarget
+end
+
+-- ==========================================
+-- CONTROLES Y EVENTOS DE UI
+-- ==========================================
+local function updateCustomTargetUI()
+	if config.customTargetEnabled and config.customTargetPlayer then
+		customTargetBtn.Text = "Priority Target: " .. config.customTargetPlayer.Name
+		customTargetBtn.BackgroundColor3 = Color3.fromRGB(255, 215, 0)
+		customTargetBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+	else
+		customTargetBtn.Text = "Priority Target: OFF"
+		customTargetBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+		customTargetBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	end
+	if config.enabled then currentTarget = getCustomTargetPart() or findNewTarget(nil) end
+end
+
+local function refreshPlayerList()
+	for _, child in ipairs(scrollingPlayers:GetChildren()) do
+		if child:IsA("Frame") then child:Destroy() end
+	end
+
+	local totalHeight = 0
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player ~= LocalPlayer then
+			local rowFrame = Instance.new("Frame", scrollingPlayers)
+			rowFrame.Size = UDim2.new(1, 0, 0, 25)
+			rowFrame.BackgroundTransparency = 1
+
+			local pBtn = Instance.new("TextButton", rowFrame)
+			pBtn.Size = UDim2.new(0, 125, 1, 0)
+			pBtn.Position = UDim2.new(0, 0, 0, 0)
+			pBtn.Font = Enum.Font.SourceSansBold
+			pBtn.TextSize = 12
+			pBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+			
+			local isExc = config.exceptions[player.Name]
+			pBtn.Text = isExc and "[EXC] " .. player.Name or player.Name
+			pBtn.BackgroundColor3 = isExc and Color3.fromRGB(180, 50, 50) or Color3.fromRGB(50, 50, 50)
+
+			pBtn.Activated:Connect(function()
+				config.exceptions[player.Name] = not config.exceptions[player.Name]
+				refreshPlayerList() 
+			end)
+
+			local targetBtn = Instance.new("TextButton", rowFrame)
+			targetBtn.Size = UDim2.new(0, 55, 1, 0)
+			targetBtn.Position = UDim2.new(0, 130, 0, 0)
+			targetBtn.Font = Enum.Font.SourceSansBold
+			targetBtn.TextSize = 11
+
+			local isCustom = (config.customTargetPlayer == player)
+			targetBtn.Text = isCustom and "[★ PRIO]" or "[PRIO]"
+			targetBtn.BackgroundColor3 = isCustom and Color3.fromRGB(255, 215, 0) or Color3.fromRGB(70, 70, 70)
+			targetBtn.TextColor3 = isCustom and Color3.fromRGB(0, 0, 0) or Color3.fromRGB(255, 255, 255)
+
+			targetBtn.Activated:Connect(function()
+				if config.customTargetPlayer == player then
+					config.customTargetPlayer = nil
+					config.customTargetEnabled = false
+				else
+					config.customTargetPlayer = player
+					config.customTargetEnabled = true
+				end
+				updateCustomTargetUI()
+				refreshPlayerList()
+			end)
+
+			totalHeight += 30
+		end
+	end
+	scrollingPlayers.CanvasSize = UDim2.new(0, 0, 0, totalHeight)
+end
+
+Players.PlayerAdded:Connect(refreshPlayerList)
+Players.PlayerRemoving:Connect(function(player)
+	if config.customTargetPlayer == player then
+		config.customTargetPlayer = nil
+		config.customTargetEnabled = false
+		updateCustomTargetUI()
+	end
+	refreshPlayerList()
+end)
+
+customTargetBtn.Activated:Connect(function()
+	if config.customTargetPlayer then
+		config.customTargetEnabled = not config.customTargetEnabled
+	else
+		config.customTargetEnabled = false
+	end
+	updateCustomTargetUI()
+end)
+
+priorityFocusBtn.Activated:Connect(function()
+	config.priorityFocusOn = not config.priorityFocusOn
+	priorityFocusBtn.Text = config.priorityFocusOn and "Priority Focus: ON" or "Priority Focus: OFF"
+	priorityFocusBtn.BackgroundColor3 = config.priorityFocusOn and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(80, 80, 80)
+end)
+
+guardTargetBtn.Activated:Connect(function()
+	config.targetGuards = not config.targetGuards
+	guardTargetBtn.Text = config.targetGuards and "Target Police: ON" or "Target Police: OFF"
+	guardTargetBtn.BackgroundColor3 = config.targetGuards and Color3.fromRGB(100, 150, 255) or Color3.fromRGB(80, 80, 80)
+end)
+
+inmateTargetBtn.Activated:Connect(function()
+	config.targetInmates = not config.targetInmates
+	inmateTargetBtn.Text = config.targetInmates and "Target Prisoners: ON" or "Target Prisoners: OFF"
+	inmateTargetBtn.BackgroundColor3 = config.targetInmates and Color3.fromRGB(255, 170, 0) or Color3.fromRGB(80, 80, 80)
+end)
+
+criminalTargetBtn.Activated:Connect(function()
+	config.targetCriminals = not config.targetCriminals
+	criminalTargetBtn.Text = config.targetCriminals and "Target Criminals: ON" or "Target Criminals: OFF"
+	criminalTargetBtn.BackgroundColor3 = config.targetCriminals and Color3.fromRGB(255, 60, 60) or Color3.fromRGB(80, 80, 80)
+end)
+
+local function toggleAim()
+	config.enabled = not config.enabled
+	currentTarget = config.enabled and (getCustomTargetPart() or findNewTarget(nil)) or nil
+	aimToggleBtn.Text = config.enabled and "Lock-On: ON (E)" or "Lock-On: OFF (E)"
+	aimToggleBtn.BackgroundColor3 = config.enabled and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(255, 100, 100)
+end
+
+local function toggleWallCheck()
+	config.useWallCheck = not config.useWallCheck
+	wallCheckBtn.Text = config.useWallCheck and "Wall Check: ON" or "Wall Check: OFF"
+	wallCheckBtn.BackgroundColor3 = config.useWallCheck and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(255, 100, 100)
+end
+
+local function toggleESP()
+	config.espEnabled = not config.espEnabled
+	espToggleBtn.Text = config.espEnabled and "ESP All: ON (J)" or "ESP All: OFF (J)"
+	espToggleBtn.BackgroundColor3 = config.espEnabled and Color3.fromRGB(100, 255, 100) or Color3.fromRGB(255, 100, 100)
+	
+	if not config.espEnabled then
+		for _, drawings in pairs(espDrawings) do
+			drawings.box.Visible = false
+			drawings.name.Visible = false
+			for _, line in pairs(drawings.skeleton) do line.Visible = false end
+		end
+	end
+end
+
+targetPartBtn.Activated:Connect(function()
+	if config.targetPartMode == "Head" then config.targetPartMode = "Torso"
+	elseif config.targetPartMode == "Torso" then config.targetPartMode = "Random"
+	else config.targetPartMode = "Head" end
+	targetPartBtn.Text = "Target Part: " .. config.targetPartMode
+	if config.enabled then currentTarget = getCustomTargetPart() or findNewTarget(nil) end
+end)
+
+aimToggleBtn.Activated:Connect(toggleAim)
+wallCheckBtn.Activated:Connect(toggleWallCheck)
+espToggleBtn.Activated:Connect(toggleESP)
+
+openExceptionsBtn.Activated:Connect(function()
+	playerListFrame.Visible = not playerListFrame.Visible
+	if playerListFrame.Visible then refreshPlayerList() end
+end)
+
+fovBox.FocusLost:Connect(function()
+	local val = tonumber(fovBox.Text)
+	if val then
+		config.fovRadius = math.clamp(math.round(val), 0, 500)
+		fovCircle.Size = UDim2.new(0, config.fovRadius * 2, 0, config.fovRadius * 2)
+	end
+	fovBox.Text = tostring(config.fovRadius)
+end)
+
+smoothBox.FocusLost:Connect(function()
+	local val = tonumber(smoothBox.Text)
+	if val then config.smoothnessValue = math.clamp(math.round(val), 0, 100) end
+	smoothBox.Text = tostring(config.smoothnessValue)
+end)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then return end
+	if input.KeyCode == config.toggleKey then toggleAim()
+	elseif input.KeyCode == config.switchTargetKey and config.enabled then currentTarget = findNewTarget(currentTarget)
+	elseif input.KeyCode == config.hideUIKey then
+		uiVisible = not uiVisible
+		mainFrame.Visible = uiVisible
+		fovCircle.Visible = uiVisible
+		if not uiVisible then playerListFrame.Visible = false end
+	elseif input.KeyCode == config.espToggleKey then toggleESP()
+	end
+end)
+
+-- ==========================================
+-- BUCLE DE RENDERIZADO
+-- ==========================================
+RunService:BindToRenderStep("AimLockSystem", Enum.RenderPriority.Camera.Value + 1, function(deltaTime)
+	if config.enabled then 
+		
+		local forcedCustomPart = nil
+		if config.customTargetEnabled and config.customTargetPlayer then
+			forcedCustomPart = getCustomTargetPart()
+		end
+
+		if forcedCustomPart then
+			currentTarget = forcedCustomPart
+		else
+			if not config.priorityFocusOn and config.customTargetEnabled and config.customTargetPlayer then
+				currentTarget = nil
+			else
+				if currentTarget and currentTarget.Parent then
+					local humanoid = currentTarget.Parent:FindFirstChild("Humanoid")
+					local targetPlayer = Players:GetPlayerFromCharacter(currentTarget.Parent)
+					
+					local isValid = false
+					if humanoid and humanoid.Health > 0 and targetPlayer and isWithinFOV(currentTarget) and isVisible(currentTarget) then
+						if isEnemy(targetPlayer) then
+							isValid = true
+						end
+					end
+					
+					if not isValid then
+						currentTarget = nil
+					end
+				else
+					currentTarget = nil
+				end
+				
+				if not currentTarget then 
+					currentTarget = findNewTarget(nil) 
+				end
+			end
+		end
+
+		if currentTarget and currentTarget.Parent then
+			local goalCFrame = CFrame.lookAt(Camera.CFrame.Position, currentTarget.Position)
+			
+			if config.smoothnessValue <= 1 then
+				Camera.CFrame = goalCFrame
+			else
+				local speed = 32 - (config.smoothnessValue / 100) * 30
+				local alpha = math.clamp(deltaTime * speed, 0, 1)
+				Camera.CFrame = Camera.CFrame:Lerp(goalCFrame, alpha)
+			end
+		end
+	end
+
+	-- ESP Render Loop
+	if not config.espEnabled then return end
+
+	for _, player in ipairs(Players:GetPlayers()) do
+		local drawings = espDrawings[player]
+		local character = player.Character
+
+		if drawings and character then
+			local humanoid = character:FindFirstChild("Humanoid")
+			local rootPart = character:FindFirstChild("HumanoidRootPart")
+			local head = character:FindFirstChild("Head")
+
+			if humanoid and humanoid.Health > 0 and rootPart and head then
+				local topPos = head.Position + Vector3.new(0, 1.2, 0)
+				local bottomPos = rootPart.Position - Vector3.new(0, 3.0, 0)
+
+				local topScreen, topOn = Camera:WorldToViewportPoint(topPos)
+				local bottomScreen, bottomOn = Camera:WorldToViewportPoint(bottomPos)
+
+				if topOn or bottomOn then
+					local height = math.abs(bottomScreen.Y - topScreen.Y)
+					local width = height * 0.65
+					local centerY = (topScreen.Y + bottomScreen.Y) / 2
+					local centerX = topScreen.X
+
+					local teamName = player.Team and player.Team.Name or "No Team"
+					local currentEspColor = Color3.fromRGB(200, 200, 200)
+					
+					if config.customTargetEnabled and config.customTargetPlayer == player then
+						currentEspColor = Color3.fromRGB(255, 215, 0)
+					elseif teamName == "Guards" then currentEspColor = Color3.fromRGB(100, 150, 255)
+					elseif teamName == "Inmates" then currentEspColor = Color3.fromRGB(255, 170, 0)
+					elseif teamName == "Criminals" then currentEspColor = Color3.fromRGB(255, 50, 50)
+					end
+
+					drawings.stroke.Color = currentEspColor
+					drawings.name.TextColor3 = currentEspColor
+					for _, line in pairs(drawings.skeleton) do line.BackgroundColor3 = currentEspColor end
+
+					-- Box
+					drawings.box.Size = UDim2.new(0, width, 0, height)
+					drawings.box.Position = UDim2.new(0, centerX, 0, centerY)
+					drawings.box.Visible = config.espBox
+
+					-- Name
+					local tag = (config.customTargetEnabled and config.customTargetPlayer == player) and " [TARGET]" or ""
+					drawings.name.Text = player.Name .. tag .. " [" .. teamName .. "]"
+					drawings.name.Position = UDim2.new(0, centerX, 0, topScreen.Y - 18)
+					drawings.name.Visible = config.espName
+
+					-- Skeleton R6
+					if config.espSkeleton then
+						local torso = character:FindFirstChild("Torso")
+						local leftArm = character:FindFirstChild("Left Arm")
+						local rightArm = character:FindFirstChild("Right Arm")
+						local leftLeg = character:FindFirstChild("Left Leg")
+						local rightLeg = character:FindFirstChild("Right Leg")
+
+						local function getV2(part)
+							if part then
+								local pos, onS = Camera:WorldToViewportPoint(part.Position)
+								if onS then return Vector2.new(pos.X, pos.Y) end
+							end
+							return nil
+						end
+
+						local function updateNativeLine(frame, from, toPart)
+							local to = getV2(toPart)
+							if from and to then
+								local center = (from + to) / 2
+								local dist = (from - to).Magnitude
+								local angle = math.deg(math.atan2(to.Y - from.Y, to.X - from.X))
+
+								frame.Size = UDim2.new(0, dist, 0, 1.5)
+								frame.Position = UDim2.new(0, center.X, 0, center.Y)
+								frame.Rotation = angle
+								frame.Visible = true
+							else
+								frame.Visible = false
+							end
+						end
+
+						local headV2 = getV2(head)
+						local tV2 = getV2(torso)
+						
+						updateNativeLine(drawings.skeleton.headToTorso, headV2, torso)
+						updateNativeLine(drawings.skeleton.torsoToLeftArm, tV2, leftArm)
+						updateNativeLine(drawings.skeleton.torsoToRightArm, tV2, rightArm)
+						updateNativeLine(drawings.skeleton.torsoToLeftLeg, tV2, leftLeg)
+						updateNativeLine(drawings.skeleton.torsoToRightLeg, tV2, rightLeg)
+					else
+						for _, line in pairs(drawings.skeleton) do line.Visible = false end
+					end
+					continue 
+				end
+			end
+		end
+
+		if drawings then
+			drawings.box.Visible = false
+			drawings.name.Visible = false
+			for _, line in pairs(drawings.skeleton) do line.Visible = false end
+		end
+	end
+end)
