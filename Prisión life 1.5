@@ -1,0 +1,726 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local Camera = workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+
+-- ==========================================
+-- CONFIGURACIÓN DEL SISTEMA
+-- ==========================================
+local config = {
+	enabled = false,
+	useWallCheck = true,
+	
+	targetGuards = true,
+	targetInmates = true,
+	targetCriminals = true,
+	
+	customTargetEnabled = false,
+	customTargetPlayer = nil,
+	priorityFocusOn = false, 
+	
+	targetPartMode = "Head",
+	smoothnessValue = 15, 
+	fovRadius = 120, 
+	fovColor = Color3.fromRGB(85, 170, 255), 
+	
+	espEnabled = true,
+	espBox = true,
+	espSkeleton = true,
+	espName = true,
+	
+	exceptions = {}, 
+	toggleKey = Enum.KeyCode.E,
+	switchTargetKey = Enum.KeyCode.Q,
+	hideUIKey = Enum.KeyCode.H,
+	espToggleKey = Enum.KeyCode.J
+}
+
+local currentTarget = nil
+local uiVisible = false -- Se activará tras la intro
+
+local raycastParams = RaycastParams.new()
+raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+
+local function updateRaycastFilter()
+	if LocalPlayer.Character then
+		raycastParams.FilterDescendantsInstances = {LocalPlayer.Character}
+	end
+end
+LocalPlayer.CharacterAdded:Connect(updateRaycastFilter)
+updateRaycastFilter()
+
+-- ==========================================
+-- 1. CREACIÓN DE LA INTERFAZ BASE
+-- ==========================================
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "PrisonLifeProUI"
+screenGui.ResetOnSpawn = false
+screenGui.IgnoreGuiInset = true
+screenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local espFolder = Instance.new("Folder", screenGui)
+espFolder.Name = "ESP_Elements"
+
+local fovCircle = Instance.new("Frame", screenGui)
+fovCircle.Name = "FOVCircle"
+fovCircle.BackgroundTransparency = 1
+fovCircle.AnchorPoint = Vector2.new(0.5, 0.5)
+fovCircle.Position = UDim2.new(0.5, 0, 0.5, 0)
+fovCircle.Size = UDim2.new(0, config.fovRadius * 2, 0, config.fovRadius * 2)
+fovCircle.Visible = false
+
+local fovStroke = Instance.new("UIStroke", fovCircle)
+fovStroke.Color = config.fovColor
+fovStroke.Thickness = 1.5
+local fovCorner = Instance.new("UICorner", fovCircle)
+fovCorner.CornerRadius = UDim.new(1, 0)
+
+-- ==========================================
+-- 2. ANIMACIÓN DE INTRODUCCIÓN
+-- ==========================================
+local introFrame = Instance.new("Frame", screenGui)
+introFrame.Size = UDim2.new(0, 400, 0, 200)
+introFrame.Position = UDim2.new(0.5, -200, 0.5, -100)
+introFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+introFrame.ClipsDescendants = true
+Instance.new("UICorner", introFrame).CornerRadius = UDim.new(0, 10)
+Instance.new("UIStroke", introFrame).Color = Color3.fromRGB(85, 170, 255)
+
+local introTitle = Instance.new("TextLabel", introFrame)
+introTitle.Size = UDim2.new(1, 0, 0, 100)
+introTitle.Position = UDim2.new(0, 0, 0, 20)
+introTitle.BackgroundTransparency = 1
+introTitle.Text = "PRISON LIFE"
+introTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+introTitle.Font = Enum.Font.GothamBlack
+introTitle.TextSize = 36
+
+local introSub = Instance.new("TextLabel", introFrame)
+introSub.Size = UDim2.new(1, 0, 0, 30)
+introSub.Position = UDim2.new(0, 0, 0, 90)
+introSub.BackgroundTransparency = 1
+introSub.Text = "SYSTEM INITIALIZATION..."
+introSub.TextColor3 = Color3.fromRGB(150, 150, 150)
+introSub.Font = Enum.Font.GothamMedium
+introSub.TextSize = 12
+introSub.TextTransparency = 1
+
+local loadingBarBg = Instance.new("Frame", introFrame)
+loadingBarBg.Size = UDim2.new(0, 300, 0, 4)
+loadingBarBg.Position = UDim2.new(0.5, -150, 0, 140)
+loadingBarBg.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+Instance.new("UICorner", loadingBarBg).CornerRadius = UDim.new(1, 0)
+
+local loadingBarFill = Instance.new("Frame", loadingBarBg)
+loadingBarFill.Size = UDim2.new(0, 0, 1, 0)
+loadingBarFill.BackgroundColor3 = Color3.fromRGB(85, 170, 255)
+Instance.new("UICorner", loadingBarFill).CornerRadius = UDim.new(1, 0)
+
+-- ==========================================
+-- 3. INTERFAZ PRINCIPAL (MENÚ PROFESIONAL)
+-- ==========================================
+local mainFrame = Instance.new("Frame", screenGui)
+mainFrame.Size = UDim2.new(0, 550, 0, 350)
+mainFrame.Position = UDim2.new(0.5, -275, 0.5, -175)
+mainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+mainFrame.Visible = false
+mainFrame.Active = true
+Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 8)
+Instance.new("UIStroke", mainFrame).Color = Color3.fromRGB(40, 40, 45)
+
+local topBar = Instance.new("Frame", mainFrame)
+topBar.Size = UDim2.new(1, 0, 0, 40)
+topBar.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+Instance.new("UICorner", topBar).CornerRadius = UDim.new(0, 8)
+local fixSquare = Instance.new("Frame", topBar) -- Para quitar el redondeo de abajo
+fixSquare.Size = UDim2.new(1, 0, 0, 10)
+fixSquare.Position = UDim2.new(0, 0, 1, -10)
+fixSquare.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+fixSquare.BorderSizePixel = 0
+
+local mainTitle = Instance.new("TextLabel", topBar)
+mainTitle.Size = UDim2.new(0, 200, 1, 0)
+mainTitle.Position = UDim2.new(0, 15, 0, 0)
+mainTitle.BackgroundTransparency = 1
+mainTitle.Text = "Prison Life Pro"
+mainTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+mainTitle.Font = Enum.Font.GothamBold
+mainTitle.TextSize = 16
+mainTitle.TextXAlignment = Enum.TextXAlignment.Left
+
+local hideText = Instance.new("TextLabel", topBar)
+hideText.Size = UDim2.new(0, 100, 1, 0)
+hideText.Position = UDim2.new(1, -115, 0, 0)
+hideText.BackgroundTransparency = 1
+hideText.Text = "[H] to Hide"
+hideText.TextColor3 = Color3.fromRGB(150, 150, 150)
+hideText.Font = Enum.Font.Gotham
+hideText.TextSize = 12
+hideText.TextXAlignment = Enum.TextXAlignment.Right
+
+-- Panel de Navegación Lateral
+local sideBar = Instance.new("Frame", mainFrame)
+sideBar.Size = UDim2.new(0, 130, 1, -40)
+sideBar.Position = UDim2.new(0, 0, 0, 40)
+sideBar.BackgroundColor3 = Color3.fromRGB(22, 22, 27)
+local sideList = Instance.new("UIListLayout", sideBar)
+sideList.SortOrder = Enum.SortOrder.LayoutOrder
+
+-- Contenedor de Pestañas
+local contentFrame = Instance.new("Frame", mainFrame)
+contentFrame.Size = UDim2.new(1, -130, 1, -40)
+contentFrame.Position = UDim2.new(0, 130, 0, 40)
+contentFrame.BackgroundTransparency = 1
+
+-- Funciones para crear UI Modular
+local tabs = {}
+local tabButtons = {}
+
+local function switchTab(tabName)
+	for name, frame in pairs(tabs) do frame.Visible = (name == tabName) end
+	for name, btn in pairs(tabButtons) do 
+		btn.BackgroundColor3 = (name == tabName) and Color3.fromRGB(35, 35, 45) or Color3.fromRGB(22, 22, 27)
+		btn.TextColor3 = (name == tabName) and Color3.fromRGB(85, 170, 255) or Color3.fromRGB(200, 200, 200)
+	end
+end
+
+local function CreateTab(name)
+	local btn = Instance.new("TextButton", sideBar)
+	btn.Size = UDim2.new(1, 0, 0, 40)
+	btn.Text = "  " .. name
+	btn.Font = Enum.Font.GothamMedium
+	btn.TextSize = 14
+	btn.TextXAlignment = Enum.TextXAlignment.Left
+	btn.BorderSizePixel = 0
+	
+	local frame = Instance.new("ScrollingFrame", contentFrame)
+	frame.Size = UDim2.new(1, 0, 1, 0)
+	frame.BackgroundTransparency = 1
+	frame.ScrollBarThickness = 4
+	frame.CanvasSize = UDim2.new(0, 0, 0, 0)
+	frame.Visible = false
+	
+	local layout = Instance.new("UIListLayout", frame)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Padding = UDim.new(0, 8)
+	
+	local padding = Instance.new("UIPadding", frame)
+	padding.PaddingTop = UDim.new(0, 15)
+	padding.PaddingLeft = UDim.new(0, 15)
+	padding.PaddingRight = UDim.new(0, 15)
+	
+	btn.Activated:Connect(function() switchTab(name) end)
+	
+	tabs[name] = frame
+	tabButtons[name] = btn
+	return frame
+end
+
+local function CreateToggle(parent, text, default, callback)
+	local btn = Instance.new("TextButton", parent)
+	btn.Size = UDim2.new(1, 0, 0, 35)
+	btn.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+	btn.Text = ""
+	Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+	
+	local label = Instance.new("TextLabel", btn)
+	label.Size = UDim2.new(1, -60, 1, 0)
+	label.Position = UDim2.new(0, 15, 0, 0)
+	label.BackgroundTransparency = 1
+	label.Text = text
+	label.TextColor3 = Color3.fromRGB(255, 255, 255)
+	label.Font = Enum.Font.GothamMedium
+	label.TextSize = 14
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	
+	local status = Instance.new("Frame", btn)
+	status.Size = UDim2.new(0, 16, 0, 16)
+	status.Position = UDim2.new(1, -30, 0.5, -8)
+	Instance.new("UICorner", status).CornerRadius = UDim.new(0, 4)
+	
+	local state = default
+	local function update()
+		status.BackgroundColor3 = state and Color3.fromRGB(85, 255, 127) or Color3.fromRGB(255, 85, 85)
+	end
+	update()
+	
+	btn.Activated:Connect(function()
+		state = not state
+		update()
+		callback(state, label)
+	end)
+end
+
+local function CreateInput(parent, text, default, callback)
+	local frame = Instance.new("Frame", parent)
+	frame.Size = UDim2.new(1, 0, 0, 35)
+	frame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+	Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 6)
+	
+	local label = Instance.new("TextLabel", frame)
+	label.Size = UDim2.new(1, -100, 1, 0)
+	label.Position = UDim2.new(0, 15, 0, 0)
+	label.BackgroundTransparency = 1
+	label.Text = text
+	label.TextColor3 = Color3.fromRGB(255, 255, 255)
+	label.Font = Enum.Font.GothamMedium
+	label.TextSize = 14
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	
+	local box = Instance.new("TextBox", frame)
+	box.Size = UDim2.new(0, 60, 0, 25)
+	box.Position = UDim2.new(1, -75, 0.5, -12.5)
+	box.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+	box.TextColor3 = Color3.fromRGB(85, 170, 255)
+	box.Font = Enum.Font.GothamBold
+	box.TextSize = 14
+	box.Text = tostring(default)
+	Instance.new("UICorner", box).CornerRadius = UDim.new(0, 4)
+	
+	box.FocusLost:Connect(function()
+		local val = tonumber(box.Text)
+		if val then callback(val, box) else box.Text = tostring(default) end
+	end)
+end
+
+-- ==========================================
+-- 4. CONSTRUCCIÓN DE PESTAÑAS Y LÓGICA
+-- ==========================================
+local aimTab = CreateTab("Aimbot")
+local visualTab = CreateTab("Visuals")
+local teamTab = CreateTab("Targets")
+local playerTab = CreateTab("Players")
+
+-- Arrastrar UI
+local function makeDraggable(frame, handle)
+	local dragging, dragInput, dragStart, startPos
+	handle.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = true
+			dragStart = input.Position
+			startPos = frame.Position
+			input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then dragging = false end
+			end)
+		end
+	end)
+	handle.InputChanged:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseMovement then dragInput = input end
+	end)
+	UserInputService.InputChanged:Connect(function(input)
+		if input == dragInput and dragging then
+			local delta = input.Position - dragStart
+			frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+		end
+	end)
+end
+makeDraggable(mainFrame, topBar)
+
+-- Lógica de Aimbot Tab
+CreateToggle(aimTab, "Enable Lock-On [E]", config.enabled, function(state)
+	config.enabled = state
+	currentTarget = state and (getCustomTargetPart() or findNewTarget(nil)) or nil
+end)
+CreateToggle(aimTab, "Wall Check", config.useWallCheck, function(state) config.useWallCheck = state end)
+CreateToggle(aimTab, "Target Part: Head", true, function(state, label)
+	if config.targetPartMode == "Head" then config.targetPartMode = "Torso"
+	elseif config.targetPartMode == "Torso" then config.targetPartMode = "Random"
+	else config.targetPartMode = "Head" end
+	label.Text = "Target Part: " .. config.targetPartMode
+end)
+CreateInput(aimTab, "FOV Radius", config.fovRadius, function(val, box)
+	config.fovRadius = math.clamp(math.round(val), 0, 500)
+	box.Text = tostring(config.fovRadius)
+	fovCircle.Size = UDim2.new(0, config.fovRadius * 2, 0, config.fovRadius * 2)
+end)
+CreateInput(aimTab, "Smoothness (0-100)", config.smoothnessValue, function(val, box)
+	config.smoothnessValue = math.clamp(math.round(val), 0, 100)
+	box.Text = tostring(config.smoothnessValue)
+end)
+
+-- Lógica de Visuals Tab
+CreateToggle(visualTab, "Master ESP [J]", config.espEnabled, function(state) config.espEnabled = state end)
+CreateToggle(visualTab, "Draw Boxes", config.espBox, function(state) config.espBox = state end)
+CreateToggle(visualTab, "Draw Skeletons", config.espSkeleton, function(state) config.espSkeleton = state end)
+CreateToggle(visualTab, "Draw Names", config.espName, function(state) config.espName = state end)
+
+-- Lógica de Targets Tab
+CreateToggle(teamTab, "Target Police", config.targetGuards, function(state) config.targetGuards = state end)
+CreateToggle(teamTab, "Target Prisoners", config.targetInmates, function(state) config.targetInmates = state end)
+CreateToggle(teamTab, "Target Criminals", config.targetCriminals, function(state) config.targetCriminals = state end)
+CreateToggle(teamTab, "Priority Focus Only", config.priorityFocusOn, function(state) config.priorityFocusOn = state end)
+
+-- Lógica de Player Tab (Lista Dinámica)
+local function refreshPlayerList()
+	for _, child in ipairs(playerTab:GetChildren()) do
+		if child:IsA("Frame") then child:Destroy() end
+	end
+
+	local totalHeight = 0
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player ~= LocalPlayer then
+			local rowFrame = Instance.new("Frame", playerTab)
+			rowFrame.Size = UDim2.new(1, 0, 0, 35)
+			rowFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
+			Instance.new("UICorner", rowFrame).CornerRadius = UDim.new(0, 6)
+
+			local pName = Instance.new("TextLabel", rowFrame)
+			pName.Size = UDim2.new(0, 150, 1, 0)
+			pName.Position = UDim2.new(0, 15, 0, 0)
+			pName.BackgroundTransparency = 1
+			pName.Text = player.Name
+			pName.TextColor3 = Color3.fromRGB(255, 255, 255)
+			pName.Font = Enum.Font.GothamMedium
+			pName.TextSize = 13
+			pName.TextXAlignment = Enum.TextXAlignment.Left
+
+			-- Botón Excluir
+			local excBtn = Instance.new("TextButton", rowFrame)
+			excBtn.Size = UDim2.new(0, 80, 0, 25)
+			excBtn.Position = UDim2.new(1, -180, 0.5, -12.5)
+			local isExc = config.exceptions[player.Name]
+			excBtn.BackgroundColor3 = isExc and Color3.fromRGB(255, 85, 85) or Color3.fromRGB(45, 45, 55)
+			excBtn.Text = isExc and "Excluded" or "Exclude"
+			excBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+			excBtn.Font = Enum.Font.GothamBold
+			excBtn.TextSize = 11
+			Instance.new("UICorner", excBtn).CornerRadius = UDim.new(0, 4)
+
+			excBtn.Activated:Connect(function()
+				config.exceptions[player.Name] = not config.exceptions[player.Name]
+				refreshPlayerList() 
+			end)
+
+			-- Botón Prioridad
+			local prioBtn = Instance.new("TextButton", rowFrame)
+			prioBtn.Size = UDim2.new(0, 80, 0, 25)
+			prioBtn.Position = UDim2.new(1, -90, 0.5, -12.5)
+			local isCustom = (config.customTargetPlayer == player)
+			prioBtn.BackgroundColor3 = isCustom and Color3.fromRGB(255, 215, 0) or Color3.fromRGB(45, 45, 55)
+			prioBtn.Text = isCustom and "★ Prio" or "Priority"
+			prioBtn.TextColor3 = isCustom and Color3.fromRGB(0, 0, 0) or Color3.fromRGB(255, 255, 255)
+			prioBtn.Font = Enum.Font.GothamBold
+			prioBtn.TextSize = 11
+			Instance.new("UICorner", prioBtn).CornerRadius = UDim.new(0, 4)
+
+			prioBtn.Activated:Connect(function()
+				if config.customTargetPlayer == player then
+					config.customTargetPlayer = nil
+					config.customTargetEnabled = false
+				else
+					config.customTargetPlayer = player
+					config.customTargetEnabled = true
+				end
+				refreshPlayerList()
+			end)
+
+			totalHeight += 43
+		end
+	end
+	playerTab.CanvasSize = UDim2.new(0, 0, 0, totalHeight)
+end
+
+Players.PlayerAdded:Connect(refreshPlayerList)
+Players.PlayerRemoving:Connect(function(player)
+	if config.customTargetPlayer == player then
+		config.customTargetPlayer = nil
+		config.customTargetEnabled = false
+	end
+	refreshPlayerList()
+end)
+
+switchTab("Aimbot") -- Pestaña por defecto
+
+-- ==========================================
+-- LÓGICA CORE (ESP, Aimbot, Teclas)
+-- ==========================================
+-- *Se mantienen intactas las funciones complejas del código original*
+
+function isException(player) return config.exceptions[player.Name] or false end
+function isEnemy(player)
+	if player == LocalPlayer or isException(player) then return false end
+	local teamName = player.Team and player.Team.Name or "Neutral"
+	if teamName == "Guards" and not config.targetGuards then return false end
+	if teamName == "Inmates" and not config.targetInmates then return false end
+	if teamName == "Criminals" and not config.targetCriminals then return false end
+	return true
+end
+
+function isWithinFOV(targetPart)
+	local screenPoint, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
+	if not onScreen then return false end
+	local screenCenter = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+	return (Vector2.new(screenPoint.X, screenPoint.Y) - screenCenter).Magnitude <= config.fovRadius
+end
+
+function isVisible(targetPart)
+	if not config.useWallCheck then return true end
+	local direction = (targetPart.Position - Camera.CFrame.Position)
+	local result = workspace:Raycast(Camera.CFrame.Position, direction, raycastParams)
+	if not result then return true end
+	if result.Instance:IsDescendantOf(targetPart.Parent) then return true end
+	local character = targetPart.Parent
+	local humanoid = character and character:FindFirstChild("Humanoid")
+	if humanoid and humanoid.SeatPart then
+		local vehicleModel = humanoid.SeatPart:FindFirstAncestorOfClass("Model")
+		if vehicleModel and result.Instance:IsDescendantOf(vehicleModel) then return true end
+	end
+	return false
+end
+
+function getTargetPart(character)
+	local mode = config.targetPartMode
+	if mode == "Random" then mode = (math.random(1, 2) == 1) and "Head" or "Torso" end
+	if mode == "Head" then return character:FindFirstChild("Head")
+	elseif mode == "Torso" then return character:FindFirstChild("Torso") or character:FindFirstChild("HumanoidRootPart") end
+	return character:FindFirstChild("Head")
+end
+
+function getCustomTargetPart()
+	if config.customTargetEnabled and config.customTargetPlayer then
+		local p = config.customTargetPlayer
+		if p and p.Parent == Players and p.Character then
+			local hum = p.Character:FindFirstChild("Humanoid")
+			local targetPart = getTargetPart(p.Character)
+			if hum and hum.Health > 0 and targetPart and isWithinFOV(targetPart) and isVisible(targetPart) then
+				return targetPart
+			end
+		end
+	end
+	return nil
+end
+
+function findNewTarget(ignoreTarget)
+	local bestTarget = nil
+	local shortestDistance = math.huge
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player == LocalPlayer then continue end
+		local character = player.Character
+		if not character then continue end
+		local humanoid = character:FindFirstChild("Humanoid")
+		local targetPart = getTargetPart(character)
+		
+		if humanoid and humanoid.Health > 0 and targetPart and isEnemy(player) and targetPart ~= ignoreTarget then
+			if isWithinFOV(targetPart) and isVisible(targetPart) then
+				local distance = (Camera.CFrame.Position - targetPart.Position).Magnitude
+				if distance < shortestDistance then
+					bestTarget = targetPart
+					shortestDistance = distance
+				end
+			end
+		end
+	end
+	return bestTarget
+end
+
+-- Input de Teclado Rápido
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then return end
+	if input.KeyCode == config.hideUIKey then
+		uiVisible = not uiVisible
+		mainFrame.Visible = uiVisible
+		fovCircle.Visible = uiVisible and config.enabled
+	elseif input.KeyCode == config.switchTargetKey and config.enabled then 
+		currentTarget = findNewTarget(currentTarget)
+	end
+end)
+
+-- Lógica ESP Base
+local espDrawings = {}
+local function removeESP(player)
+	if espDrawings[player] then
+		espDrawings[player].box:Destroy()
+		espDrawings[player].name:Destroy()
+		for _, line in pairs(espDrawings[player].skeleton) do line:Destroy() end
+		espDrawings[player] = nil
+	end
+end
+local function setupESP(player)
+	if player == LocalPlayer or espDrawings[player] then return end
+	local box = Instance.new("Frame")
+	box.BackgroundTransparency = 1
+	box.AnchorPoint = Vector2.new(0.5, 0.5)
+	box.Visible = false
+	box.Parent = espFolder
+	local boxStroke = Instance.new("UIStroke", box)
+	boxStroke.Thickness = 1.5
+
+	local nameLabel = Instance.new("TextLabel")
+	nameLabel.BackgroundTransparency = 1
+	nameLabel.AnchorPoint = Vector2.new(0.5, 1)
+	nameLabel.Size = UDim2.new(0, 150, 0, 15)
+	nameLabel.Font = Enum.Font.GothamBold
+	nameLabel.TextSize = 11
+	nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	nameLabel.Visible = false
+	nameLabel.Parent = espFolder
+
+	local function makeLine()
+		local line = Instance.new("Frame")
+		line.AnchorPoint = Vector2.new(0.5, 0.5)
+		line.BorderSizePixel = 0
+		line.Visible = false
+		line.Parent = espFolder
+		return line
+	end
+
+	espDrawings[player] = {
+		box = box, stroke = boxStroke, name = nameLabel,
+		skeleton = {
+			headToTorso = makeLine(), torsoToLeftArm = makeLine(),
+			torsoToRightArm = makeLine(), torsoToLeftLeg = makeLine(), torsoToRightLeg = makeLine()
+		}
+	}
+end
+for _, p in ipairs(Players:GetPlayers()) do setupESP(p) end
+Players.PlayerAdded:Connect(setupESP)
+Players.PlayerRemoving:Connect(removeESP)
+
+-- Bucle Principal (Aimbot + ESP)
+RunService:BindToRenderStep("AimLockSystemPro", Enum.RenderPriority.Camera.Value + 1, function(deltaTime)
+	if config.enabled then 
+		local forcedCustomPart = config.customTargetEnabled and config.customTargetPlayer and getCustomTargetPart() or nil
+		if forcedCustomPart then
+			currentTarget = forcedCustomPart
+		else
+			if not config.priorityFocusOn and config.customTargetEnabled and config.customTargetPlayer then
+				currentTarget = nil
+			else
+				if currentTarget and currentTarget.Parent then
+					local humanoid = currentTarget.Parent:FindFirstChild("Humanoid")
+					local targetPlayer = Players:GetPlayerFromCharacter(currentTarget.Parent)
+					local isValid = (humanoid and humanoid.Health > 0 and targetPlayer and isWithinFOV(currentTarget) and isVisible(currentTarget) and isEnemy(targetPlayer))
+					if not isValid then currentTarget = nil end
+				else currentTarget = nil end
+				if not currentTarget then currentTarget = findNewTarget(nil) end
+			end
+		end
+
+		if currentTarget and currentTarget.Parent then
+			local goalCFrame = CFrame.lookAt(Camera.CFrame.Position, currentTarget.Position)
+			if config.smoothnessValue <= 1 then Camera.CFrame = goalCFrame
+			else
+				local speed = 32 - (config.smoothnessValue / 100) * 30
+				local alpha = math.clamp(deltaTime * speed, 0, 1)
+				Camera.CFrame = Camera.CFrame:Lerp(goalCFrame, alpha)
+			end
+		end
+	end
+
+	-- ESP Render
+	if not config.espEnabled then 
+		for _, drw in pairs(espDrawings) do 
+			drw.box.Visible = false; drw.name.Visible = false
+			for _, line in pairs(drw.skeleton) do line.Visible = false end
+		end
+		return 
+	end
+
+	for _, player in ipairs(Players:GetPlayers()) do
+		local drawings = espDrawings[player]
+		local character = player.Character
+		if drawings and character then
+			local humanoid = character:FindFirstChild("Humanoid")
+			local rootPart = character:FindFirstChild("HumanoidRootPart")
+			local head = character:FindFirstChild("Head")
+
+			if humanoid and humanoid.Health > 0 and rootPart and head then
+				local topPos = head.Position + Vector3.new(0, 1.2, 0)
+				local bottomPos = rootPart.Position - Vector3.new(0, 3.0, 0)
+				local topScreen, topOn = Camera:WorldToViewportPoint(topPos)
+				local bottomScreen, bottomOn = Camera:WorldToViewportPoint(bottomPos)
+
+				if topOn or bottomOn then
+					local height = math.abs(bottomScreen.Y - topScreen.Y)
+					local width = height * 0.65
+					local centerY = (topScreen.Y + bottomScreen.Y) / 2
+					local centerX = topScreen.X
+
+					local teamName = player.Team and player.Team.Name or "No Team"
+					local currentEspColor = Color3.fromRGB(200, 200, 200)
+					if config.customTargetEnabled and config.customTargetPlayer == player then currentEspColor = Color3.fromRGB(255, 215, 0)
+					elseif teamName == "Guards" then currentEspColor = Color3.fromRGB(85, 170, 255)
+					elseif teamName == "Inmates" then currentEspColor = Color3.fromRGB(255, 170, 0)
+					elseif teamName == "Criminals" then currentEspColor = Color3.fromRGB(255, 85, 85) end
+
+					drawings.stroke.Color = currentEspColor
+					drawings.name.TextColor3 = currentEspColor
+					for _, line in pairs(drawings.skeleton) do line.BackgroundColor3 = currentEspColor end
+
+					drawings.box.Size = UDim2.new(0, width, 0, height)
+					drawings.box.Position = UDim2.new(0, centerX, 0, centerY)
+					drawings.box.Visible = config.espBox
+
+					local tag = (config.customTargetEnabled and config.customTargetPlayer == player) and " [★]" or ""
+					drawings.name.Text = player.Name .. tag
+					drawings.name.Position = UDim2.new(0, centerX, 0, topScreen.Y - 15)
+					drawings.name.Visible = config.espName
+
+					if config.espSkeleton then
+						local torso = character:FindFirstChild("Torso")
+						local leftArm = character:FindFirstChild("Left Arm")
+						local rightArm = character:FindFirstChild("Right Arm")
+						local leftLeg = character:FindFirstChild("Left Leg")
+						local rightLeg = character:FindFirstChild("Right Leg")
+						local function getV2(part)
+							if part then
+								local pos, onS = Camera:WorldToViewportPoint(part.Position)
+								if onS then return Vector2.new(pos.X, pos.Y) end
+							end
+							return nil
+						end
+						local function updateLine(frame, from, toPart)
+							local to = getV2(toPart)
+							if from and to then
+								local center = (from + to) / 2
+								local dist = (from - to).Magnitude
+								local angle = math.deg(math.atan2(to.Y - from.Y, to.X - from.X))
+								frame.Size = UDim2.new(0, dist, 0, 1.5)
+								frame.Position = UDim2.new(0, center.X, 0, center.Y)
+								frame.Rotation = angle
+								frame.Visible = true
+							else frame.Visible = false end
+						end
+						local headV2 = getV2(head); local tV2 = getV2(torso)
+						updateLine(drawings.skeleton.headToTorso, headV2, torso)
+						updateLine(drawings.skeleton.torsoToLeftArm, tV2, leftArm)
+						updateLine(drawings.skeleton.torsoToRightArm, tV2, rightArm)
+						updateLine(drawings.skeleton.torsoToLeftLeg, tV2, leftLeg)
+						updateLine(drawings.skeleton.torsoToRightLeg, tV2, rightLeg)
+					else for _, line in pairs(drawings.skeleton) do line.Visible = false end end
+					continue 
+				end
+			end
+		end
+		if drawings then
+			drawings.box.Visible = false; drawings.name.Visible = false
+			for _, line in pairs(drawings.skeleton) do line.Visible = false end
+		end
+	end
+end)
+
+-- ==========================================
+-- INICIAR ANIMACIÓN
+-- ==========================================
+local tweenInfo = TweenInfo.new(2, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+TweenService:Create(loadingBarFill, tweenInfo, {Size = UDim2.new(1, 0, 1, 0)}):Play()
+TweenService:Create(introSub, TweenInfo.new(1), {TextTransparency = 0}):Play()
+
+task.wait(2.5)
+
+TweenService:Create(introFrame, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.In), {Size = UDim2.new(0, 0, 0, 0)}):Play()
+TweenService:Create(introTitle, TweenInfo.new(0.3), {TextTransparency = 1}):Play()
+TweenService:Create(introSub, TweenInfo.new(0.3), {TextTransparency = 1}):Play()
+
+task.wait(0.5)
+introFrame:Destroy()
+
+-- Mostrar Interfaz Principal
+uiVisible = true
+mainFrame.Position = UDim2.new(0.5, -275, 0.5, -150) -- Empieza un poco abajo
+mainFrame.Visible = true
+fovCircle.Visible = config.enabled
+TweenService:Create(mainFrame, TweenInfo.new(0.6, Enum.EasingStyle.Exponential, Enum.EasingDirection.Out), {Position = UDim2.new(0.5, -275, 0.5, -175)}):Play()
+refreshPlayerList()
